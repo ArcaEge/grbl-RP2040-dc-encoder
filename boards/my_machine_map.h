@@ -19,7 +19,7 @@
   You should have received a copy of the GNU General Public License
   along with grblHAL. If not, see <http://www.gnu.org/licenses/>.
 */
-#define USE_EXPANDERS
+// #define USE_EXPANDERS
 #if TRINAMIC_ENABLE
 #error Trinamic plugin not supported!
 #endif
@@ -33,10 +33,12 @@
 #endif
 
 // Define step pulse output pins.
+// Unused - depended on by stepper code
 #define STEP_PORT               GPIO_PIO  // N_AXIS pin PIO SM
 #define STEP_PINS_BASE          2         // N_AXIS number of consecutive pins are used by PIO
 
 // Define step direction output pins.
+// Unused - depended on by stepper code
 #define DIRECTION_PORT          GPIO_OUTPUT
 #define X_DIRECTION_PIN         5
 #define Y_DIRECTION_PIN         6
@@ -44,8 +46,10 @@
 #define DIRECTION_OUTMODE       GPIO_SHIFT5
 
 // Define stepper driver enable/disable output pin.
-#define ENABLE_PORT             GPIO_OUTPUT
-#define STEPPERS_ENABLE_PIN     8
+// #define ENABLE_PORT             GPIO_OUTPUT
+// #define STEPPERS_ENABLE_PIN     8
+
+// Define pins for 
 
 // Define homing/hard limit switch input pins.
 #define X_LIMIT_PIN             9
@@ -53,28 +57,28 @@
 #define Z_LIMIT_PIN             11
 #define LIMIT_INMODE            GPIO_MAP
 
-#define AUXOUTPUT0_PORT         GPIO_OUTPUT
-#define AUXOUTPUT0_PIN          12
+// #define AUXOUTPUT0_PORT         GPIO_OUTPUT
+// #define AUXOUTPUT0_PIN          12
 #if I2C_ENABLE
 #define I2C_PORT                1
 #define I2C_SDA                 26
 #define I2C_SCL                 27
 #else
-#define AUXOUTPUT1_PORT         GPIO_OUTPUT
-#define AUXOUTPUT1_PIN          26
+// #define AUXOUTPUT1_PORT         GPIO_OUTPUT
+// #define AUXOUTPUT1_PIN          26
 //#define AUXOUTPUT2_PORT         GPIO_OUTPUT
 //#define AUXOUTPUT2_PIN          27
 #endif
-#define AUXOUTPUT3_PORT         GPIO_OUTPUT // Spindle PWM
-#define AUXOUTPUT3_PIN          15
-#define AUXOUTPUT4_PORT         GPIO_OUTPUT // Spindle direction
-#define AUXOUTPUT4_PIN          14
-#define AUXOUTPUT5_PORT         GPIO_OUTPUT // Spindle enable
-#define AUXOUTPUT5_PIN          13   
-#define AUXOUTPUT6_PORT         GPIO_OUTPUT // Coolant flood
-#define AUXOUTPUT6_PIN          20   
-#define AUXOUTPUT7_PORT         GPIO_OUTPUT // Coolant mist
-#define AUXOUTPUT7_PIN          20   
+// #define AUXOUTPUT3_PORT         GPIO_OUTPUT // Spindle PWM
+// #define AUXOUTPUT3_PIN          15
+// #define AUXOUTPUT4_PORT         GPIO_OUTPUT // Spindle direction
+// #define AUXOUTPUT4_PIN          14
+// #define AUXOUTPUT5_PORT         GPIO_OUTPUT // Spindle enable
+// #define AUXOUTPUT5_PIN          13   
+// #define AUXOUTPUT6_PORT         GPIO_OUTPUT // Coolant flood
+// #define AUXOUTPUT6_PIN          20   
+// #define AUXOUTPUT7_PORT         GPIO_OUTPUT // Coolant mist
+// #define AUXOUTPUT7_PIN          20   
 
 //#define NEOPIXELS_PIN 27
 //#define NEOPIXELS_NUM 5
@@ -113,10 +117,10 @@
 // #define AUXINPUT0_PIN           22
 #define AUXINPUT1_PIN           21
 #endif
-#define AUXINPUT2_PIN           28 // Probe
-#define AUXINPUT3_PIN           18 // Reset/EStop
-#define AUXINPUT4_PIN           19 // Feed hold
-#define AUXINPUT5_PIN           20 // Cycle start
+// #define AUXINPUT2_PIN           28 // Probe
+// #define AUXINPUT3_PIN           18 // Reset/EStop
+// #define AUXINPUT4_PIN           19 // Feed hold
+// #define AUXINPUT5_PIN           20 // Cycle start
 
 // Define user-control controls (cycle start, reset, feed hold) input pins.
 #if CONTROL_ENABLE & CONTROL_HALT

@@ -214,11 +214,24 @@ static net_types_t net = {0};
 
 static float pio_clk;
 static pio_steps_t pio_steps = {.delay = 20, .length = 100};
+static uint quadrature_encoder_sm, quadrature_encoder_sm_offset;
 static uint stepper_timer_sm, stepper_timer_sm_offset;
 static bool IOInitDone = false;
 static status_code_t (*on_unknown_sys_command)(uint_fast16_t state, char *line, char *lcline);
 static volatile uint32_t elapsed_ticks = 0;
 static pin_group_pins_t limit_inputs;
+
+static struct {
+    int32_t x;
+    int32_t y;
+    int32_t z;
+} position;
+
+static struct {
+    bool x;
+    bool y;
+    bool z;
+} direction;
 
 #ifdef USE_EXPANDERS
 xbar_t *iox_out[N_AUX_DOUT] = {};
@@ -851,6 +864,7 @@ static void __not_in_flash_func(stepperCyclesPerTick)(uint32_t cycles_per_tick)
     stepper_timer_set_period(pio1, stepper_timer_sm, stepper_timer_sm_offset, cycles_per_tick < 1000000 ? max(cycles_per_tick, step_pulse.t_min_period) : 1000000, PIO_RATE_ADJ);
 }
 
+#ifndef DC_ENCODER
 #if STEP_PORT == GPIO_PIO || STEP_PORT == GPIO_PIO_1
 
 // Set stepper pulse output pins
@@ -958,6 +972,7 @@ static inline __attribute__((always_inline)) void stepper_set_step (uint_fast8_t
 }
 
 #endif // STEP_PORT == GPIO_PIO || STEP_PORT == GPIO_PIO_1
+#endif
 
 #ifdef SQUARING_ENABLED
 
@@ -1155,6 +1170,7 @@ static void StepperDisableMotors (axes_signals_t axes, squaring_mode_t mode)
 
 #else // !SQUARING_ENABLED
 
+#ifndef DC_ENCODER
 inline static __attribute__((always_inline)) void stepperSetStepOutputs (axes_signals_t step_out)
 {
 #if STEP_INJECT_ENABLE
@@ -1203,7 +1219,7 @@ inline static __attribute__((always_inline)) void stepperSetStepOutputs (axes_si
 
 #endif
 }
-
+#endif
 #endif // SQUARING_ENABLED
 
 #ifdef GANGING_ENABLED
@@ -1279,6 +1295,7 @@ static inline __attribute__((always_inline)) void stepper_set_dir (uint_fast8_t 
 
 #else // DIRECTION_OUTMODE <= GPIO_MAP
 
+#ifndef DC_ENCODER
 static inline __attribute__((always_inline)) void stepper_set_dir (uint_fast8_t axis, axes_signals_t dir_out)
 {
     switch(axis) {
@@ -1335,9 +1352,10 @@ static inline __attribute__((always_inline)) void stepper_set_dir (uint_fast8_t 
 #endif
     }
 }
-
+#endif
 #endif
 
+#ifndef DC_ENCODER
 // Set stepper direction output pins
 // NOTE: see note for stepperSetStepOutputs()
 //inline static __attribute__((always_inline)) void stepperSetDirOutputs (axes_signals_t dir_out)
@@ -1411,22 +1429,32 @@ static void stepperSetDirOutputs (axes_signals_t dir_out)
  
 #endif
 }
+#endif
 
 // Disables stepper driver interrupts
 static void stepperGoIdle (bool clear_signals)
 {
-    irq_set_enabled(PIO1_IRQ_0, false);
-    stepper_timer_stop(pio1, stepper_timer_sm);
+    // irq_set_enabled(PIO1_IRQ_0, false);
+    // stepper_timer_stop(pio1, stepper_timer_sm);
     
     if(clear_signals) {
+#ifndef DC_ENCODER
         stepperSetDirOutputs((axes_signals_t){0});
         stepperSetStepOutputs((axes_signals_t){0});
+#endif
     }
 }
 
 // Sets stepper direction and pulse pins and starts a step pulse.
+// TODO: Stepper stepping function
 static void __not_in_flash_func(stepperPulseStart)(stepper_t *stepper)
 {
+#ifdef DC_ENCODER
+    // positions in raw steps, to feed into PID
+    position.x += (stepper->dir_out.x ? -1 : 1) * stepper->step_out.x;
+    position.y += (stepper->dir_out.y ? -1 : 1) * stepper->step_out.y;
+    position.z += (stepper->dir_out.z ? -1 : 1) * stepper->step_out.z;
+#else
     if(stepper->dir_changed.bits) {
         stepper->dir_changed.bits = 0;
         stepperSetDirOutputs(stepper->dir_out);
@@ -1434,6 +1462,7 @@ static void __not_in_flash_func(stepperPulseStart)(stepper_t *stepper)
 
     if(stepper->step_out.bits)
         stepperSetStepOutputs(stepper->step_out);
+#endif
 }
 
 #if STEP_INJECT_ENABLE
@@ -2183,6 +2212,7 @@ void on_settings_changed (settings_t *settings, settings_changed_flags_t changed
 
 #endif // NEOPIXELS_PIN
 
+#ifndef DC_ENCODER
         step_pulse.t_min_period = (uint32_t)ceilf((settings->steppers.pulse_microseconds + STEP_PULSE_TOFF_MIN) * (hal.f_step_timer / 1000000.0f));
 
 #if SD_SHIFT_REGISTER
@@ -2252,6 +2282,7 @@ void on_settings_changed (settings_t *settings, settings_changed_flags_t changed
 #endif
 
 #endif // PIO step parameters init
+#endif
 
         hal.stepper.go_idle(true);
 
@@ -2671,7 +2702,10 @@ static bool driver_setup (settings_t *settings)
     IOInitDone = settings->version.id == 23;
 
     grbl.on_settings_changed(settings, (settings_changed_flags_t){0});
+
+#ifndef DC_ENCODER
     stepperSetDirOutputs((axes_signals_t){0});
+#endif
 
 #if PPI_ENABLE
     ppi_init();
@@ -2848,6 +2882,7 @@ void board_ports_init (void)
 
 // Initialize HAL pointers, setup serial comms and enable EEPROM
 // NOTE: grblHAL is not yet configured (from EEPROM data), driver_setup() will be called when done
+// TODO: initialisation
 bool driver_init (void)
 {
     // Enable EEPROM and serial port here for grblHAL to be able to configure itself and report any errors
@@ -3097,6 +3132,14 @@ bool driver_init (void)
     pio_sm_claim(pio1, 0); // Reserve PIO state machine for cyw43 driver.
 #endif
 
+#ifdef DC_ENCODER
+    quadrature_encoder_sm = pio_claim_unused_sm(pio0, false);
+    quadrature_encoder_sm_offset = pio_add_program(pio0, &quadrature_encoder_program);
+    quadrature_encoder_program_init(pio0, quadrature_encoder_sm, quadrature_encoder_sm_offset, pio_clk); // 10MHz
+    irq_set_exclusive_handler(PIO0_IRQ_0, stepper_int_handler);
+    irq_set_priority(PIO0_IRQ_0, PICO_HIGHEST_IRQ_PRIORITY);
+#endif
+
     stepper_timer_sm = pio_claim_unused_sm(pio1, false);
     stepper_timer_sm_offset = pio_add_program(pio1, &stepper_timer_program);
     stepper_timer_program_init(pio1, stepper_timer_sm, stepper_timer_sm_offset, pio_clk); // 10MHz
@@ -3147,8 +3190,10 @@ bool driver_init (void)
 
 #elif STEP_PORT == GPIO_PIO
 
-if(pio_claim_free_sm_and_add_program_for_gpio_range(&step_pulse_program, &step_pio, &step_sm, &pio_offset, STEP_PINS_BASE, N_AXIS + N_GANGED, STEP_PINS_BASE + N_AXIS + N_GANGED > 31))
-   step_pulse_program_init(step_pio, step_sm, pio_offset, STEP_PINS_BASE, N_AXIS + N_GANGED, pio_clk);
+#ifndef DC_ENCODER
+    if(pio_claim_free_sm_and_add_program_for_gpio_range(&step_pulse_program, &step_pio, &step_sm, &pio_offset, STEP_PINS_BASE, N_AXIS + N_GANGED, STEP_PINS_BASE + N_AXIS + N_GANGED > 31))
+       step_pulse_program_init(step_pio, step_sm, pio_offset, STEP_PINS_BASE, N_AXIS + N_GANGED, pio_clk);
+#endif
 
 #elif STEP_PORT == GPIO_SR8
 

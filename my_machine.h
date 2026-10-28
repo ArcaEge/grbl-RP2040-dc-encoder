@@ -173,3 +173,9 @@
 #endif // WIFI_ENABLE
 
 /**/
+
+#define COOLANT_ENABLE 0
+#define CONTROL_ENABLE 0
+#define SPINDLE_ENABLE 0
+
+#define DC_ENCODER
