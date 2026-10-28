@@ -36,13 +36,15 @@
 //#define BOARD_CITOH_CX6000    // C.ITOH CX-6000 HPGL plotter
 //#define BOARD_GENERIC_4AXIS
 //#define BOARD_GENERIC_8AXIS
-//#define BOARD_MY_MACHINE      // Add my_machine_map.h before enabling this!
+#define BOARD_MY_MACHINE      // Add my_machine_map.h before enabling this!
 
 // Configuration
 // Uncomment to enable.
 
 #ifndef USB_SERIAL_CDC
-#define USB_SERIAL_CDC          1 // Serial communication via native USB.
+
+#define USB_SERIAL_CDC          0 //1 // Serial communication via native USB
+
 #endif
 //#define BLUETOOTH_ENABLE        2 // Set to 2 for HC-05 module, enable in CMakeLists.txt if for Pico W Bluetooth.
 // Spindle selection:
@@ -96,7 +98,7 @@
 
 // IO expanders:
 //
-//#define MCP3221_ENABLE          1 // MCP3221 I2C 12 bit ADC input, default address is 0x9A (MCP3221_ADDRESS).
+// #define MCP3221_ENABLE          1 // MCP3221 I2C 12 bit ADC input, default address is 0x9A (MCP3221_ADDRESS).
 //#define MCP4725_ENABLE          1 // MCP4725 I2C 12 bit DAC output, default address is 0xC0 (MCP3221_ADDRESS).
 //#define MCP23017_ENABLE         1 // MCP23017 I2C 16 channel digital I/O, default address is 0x40 (MCP23017_ADDRESS).
                                     // 1: Port A as outputs, port B as inputs.
@@ -108,7 +110,7 @@
 // Optional control signals:
 // These will be assigned to aux input pins. Use the $pins command to check which pins are assigned.
 // NOTE: If not enough pins are available assignment will silently fail.
-//#define PROBE_ENABLE            0 // Default enabled, remove comment to disable probe input.
+#define PROBE_ENABLE            0 // Default enabled, remove comment to disable probe input.
 //#define PROBE2_ENABLE           1 // Enable second regular probe input, depending on the board the input assigned may be predefined.
 //#define TOOLSETTER_ENABLE       1 // Enable toolsetter input, depending on the board the input assigned may be predefined.
 //#define SAFETY_DOOR_ENABLE      1
