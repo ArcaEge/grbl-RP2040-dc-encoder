@@ -49,7 +49,14 @@
 // #define ENABLE_PORT             GPIO_OUTPUT
 // #define STEPPERS_ENABLE_PIN     8
 
-// Define pins for 
+#ifdef DC_ENCODER
+// Define pins for quadrature encoder
+// Pin + 1 is second pin (must be adjacent due to PIO)
+#define X_ENCODER_A_PIN 2
+
+#define X_MOTOR_A_PIN 6
+#define X_MOTOR_B_PIN 7
+#endif
 
 // Define homing/hard limit switch input pins.
 #define X_LIMIT_PIN             9

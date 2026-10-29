@@ -38,6 +38,7 @@
 #include "hardware/structs/systick.h"
 #include "hardware/structs/iobank0.h"
 #include "hardware/structs/sio.h"
+#include "hardware/pwm.h"
 #include "pico/aon_timer.h"
 #if RP_MCU == 2040
 #include "hardware/rtc.h"
@@ -65,6 +66,7 @@
 #include "grbl/protocol.h"
 #if NVSDATA_BUFFER_ENABLE
 #include "grbl/nvs_buffer.h"
+#include "grbl/pid.h"
 #endif
 
 #ifdef I2C_PORT
@@ -214,7 +216,6 @@ static net_types_t net = {0};
 
 static float pio_clk;
 static pio_steps_t pio_steps = {.delay = 20, .length = 100};
-static uint quadrature_encoder_sm, quadrature_encoder_sm_offset;
 static uint stepper_timer_sm, stepper_timer_sm_offset;
 static bool IOInitDone = false;
 static status_code_t (*on_unknown_sys_command)(uint_fast16_t state, char *line, char *lcline);
@@ -226,12 +227,71 @@ static struct {
     int32_t y;
     int32_t z;
 } position;
-
 static struct {
     bool x;
     bool y;
     bool z;
 } direction;
+static struct {
+    int x;
+    int y;
+} dma_channels;
+static struct {
+    volatile int32_t x;
+    volatile int32_t y;
+} encoder_counter;
+static struct {
+    uint x;
+    uint y;
+} quadrature_encoder_sm;
+static struct {
+    uint x;
+    uint y;
+} quadrature_encoder_sm_offset;
+
+pwm_config pwm_conf;
+
+typedef struct {
+    float kp, ki, kd, kv;
+    float out_max, slew;
+    float i_state, prev_act, prev_target, prev_out;
+} pid2_t;
+
+static float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+void pid2_reset(pid2_t *p, float target, float act)
+{
+    p->i_state = 0.0f;
+    p->prev_act = act;
+    p->prev_target = target;
+    p->prev_out = 0.0f;
+}
+
+float pid2(pid2_t *p, float target, float act)
+{
+    float err = target - act;
+
+    float out = p->kp * err
+              + p->kv * (target - p->prev_target)
+              - p->kd * (act - p->prev_act)
+              + p->i_state;
+
+    if(fabsf(out) < p->out_max)
+        p->i_state += p->ki * err;
+
+    out = clampf(out, -p->out_max, p->out_max);
+    out = clampf(out, p->prev_out - p->slew, p->prev_out + p->slew);
+
+    p->prev_act = act;
+    p->prev_target = target;
+    p->prev_out = out;
+    return out;
+}
+
+static struct {
+    pid2_t x;
+    pid2_t y;
+} pid;
 
 #ifdef USE_EXPANDERS
 xbar_t *iox_out[N_AUX_DOUT] = {};
@@ -1434,9 +1494,9 @@ static void stepperSetDirOutputs (axes_signals_t dir_out)
 // Disables stepper driver interrupts
 static void stepperGoIdle (bool clear_signals)
 {
-    // irq_set_enabled(PIO1_IRQ_0, false);
-    // stepper_timer_stop(pio1, stepper_timer_sm);
-    
+    irq_set_enabled(PIO1_IRQ_0, false);
+    stepper_timer_stop(pio1, stepper_timer_sm);
+
     if(clear_signals) {
 #ifndef DC_ENCODER
         stepperSetDirOutputs((axes_signals_t){0});
@@ -2882,7 +2942,6 @@ void board_ports_init (void)
 
 // Initialize HAL pointers, setup serial comms and enable EEPROM
 // NOTE: grblHAL is not yet configured (from EEPROM data), driver_setup() will be called when done
-// TODO: initialisation
 bool driver_init (void)
 {
     // Enable EEPROM and serial port here for grblHAL to be able to configure itself and report any errors
@@ -3133,11 +3192,49 @@ bool driver_init (void)
 #endif
 
 #ifdef DC_ENCODER
-    quadrature_encoder_sm = pio_claim_unused_sm(pio0, false);
-    quadrature_encoder_sm_offset = pio_add_program(pio0, &quadrature_encoder_program);
-    quadrature_encoder_program_init(pio0, quadrature_encoder_sm, quadrature_encoder_sm_offset, pio_clk); // 10MHz
-    irq_set_exclusive_handler(PIO0_IRQ_0, stepper_int_handler);
-    irq_set_priority(PIO0_IRQ_0, PICO_HIGHEST_IRQ_PRIORITY);
+    quadrature_encoder_sm.x = pio_claim_unused_sm(pio0, false);
+    pio_add_program(pio0, &quadrature_encoder_program);
+    quadrature_encoder_program_init(pio0, quadrature_encoder_sm.x, X_ENCODER_A_PIN, 100000);
+
+    pwm_conf = pwm_get_default_config();
+    pwm_conf.top = 256;
+
+    pwm_config_set_clkdiv(&pwm_conf, 4.f);
+
+    gpio_set_function(X_MOTOR_A_PIN, GPIO_FUNC_PWM);
+    gpio_set_function(X_MOTOR_B_PIN, GPIO_FUNC_PWM);
+    
+    pwm_init(pwm_gpio_to_slice_num(X_MOTOR_A_PIN), &pwm_conf, true);
+    pwm_init(pwm_gpio_to_slice_num(X_MOTOR_B_PIN), &pwm_conf, true);
+
+    pwm_set_gpio_level(X_MOTOR_A_PIN, 0);
+    pwm_set_gpio_level(X_MOTOR_B_PIN, 0);
+
+    dma_channels.x = dma_claim_unused_channel(true);
+    dma_channel_config x_channel_conf = dma_channel_get_default_config(dma_channels.x);
+    channel_config_set_transfer_data_size(&x_channel_conf, DMA_SIZE_32);
+    channel_config_set_read_increment(&x_channel_conf, false);
+    channel_config_set_write_increment(&x_channel_conf, false);
+    channel_config_set_dreq(&x_channel_conf, pio_get_dreq(pio0, quadrature_encoder_sm.x, false));
+    dma_channel_configure(dma_channels.x, &x_channel_conf, &encoder_counter.x, &pio0->rxf[quadrature_encoder_sm.x], 0xFFFFFFFF, true);
+
+    // pid_values_t cfg_x = {
+    //     .p_gain = 3.0f, 
+    //     .i_gain = 0.0f,
+    //     .d_gain = 12.0f,
+    //     .i_max_error = 3000.0f,
+    //     .d_max_error = 20.0f,
+    //     .max_error = (pwm_conf.top - 1)
+    // };
+
+    // pidf_init(&pid.x, &cfg_x);
+    pid.x.kp = 5.0f;
+    pid.x.ki = 0.0f;
+    pid.x.kd = 0.0f;
+    pid.x.out_max = pwm_conf.top - 1;
+    pid.x.slew = 100.0f;
+
+    pid2_reset(&pid.x, 0, 0);
 #endif
 
     stepper_timer_sm = pio_claim_unused_sm(pio1, false);
@@ -3421,10 +3518,33 @@ void __not_in_flash_func(gpio_int_handler)(uint pin, uint32_t events)
     }
 }
 
+#include <stdio.h>
+
 // Interrupt handler for 1 ms interval timer
 void __not_in_flash_func(isr_systick)(void)
 {
     elapsed_ticks++;
+
+    // int32_t x_count = quadrature_encoder_get_count(pio0, quadrature_encoder_sm.x);
+    float x_out = pid2(&pid.x, (float)encoder_counter.x, (float)position.x);
+
+    if (x_out < 0.2f * pwm_conf.top && x_out > -0.2f * pwm_conf.top)
+    {
+        pwm_set_gpio_level(X_MOTOR_A_PIN, 0);
+        pwm_set_gpio_level(X_MOTOR_B_PIN, 0);
+    }
+    else if (x_out <= 0.0f) {
+        pwm_set_gpio_level(X_MOTOR_A_PIN, (uint16_t)(-x_out));
+        pwm_set_gpio_level(X_MOTOR_B_PIN, 0);
+    } else {
+        pwm_set_gpio_level(X_MOTOR_A_PIN, 0);
+        pwm_set_gpio_level(X_MOTOR_B_PIN, (uint16_t)(x_out));
+    }
+    // char buf[sizeof(float)*3+4];
+    // snprintf(buf, sizeof buf, "%f\r\n", x_out);
+
+    // if (elapsed_ticks % 1000 == 0)
+    //     hal.stream.write(buf);
 
 #if SDCARD_ENABLE
     static uint32_t fatfs_ticks = 10;
