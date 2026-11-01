@@ -77,6 +77,7 @@ if(AddMyPlugin)
     ioports_analog.c
     timers.c
     tmc_uart.c
+    servo.c
     my_plugin.c
     boards/pico_cnc.c
     boards/flexihal2350.c
@@ -103,6 +104,7 @@ else()
     ioports_analog.c
     timers.c
     tmc_uart.c
+    servo.c
     boards/pico_cnc.c
     boards/flexihal2350.c
     boards/btt_skr_pico_10.c

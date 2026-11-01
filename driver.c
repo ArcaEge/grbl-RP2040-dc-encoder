@@ -67,6 +67,7 @@
 #if NVSDATA_BUFFER_ENABLE
 #include "grbl/nvs_buffer.h"
 #include "grbl/pid.h"
+#include "servo.h"
 #endif
 
 #ifdef I2C_PORT
@@ -228,11 +229,6 @@ static struct {
     int32_t z;
 } position;
 static struct {
-    bool x;
-    bool y;
-    bool z;
-} direction;
-static struct {
     int x;
     int y;
 } dma_channels;
@@ -249,7 +245,8 @@ static struct {
     uint y;
 } quadrature_encoder_sm_offset;
 
-pwm_config pwm_conf;
+pwm_config dc_pwm_conf;
+pwm_config servo_pwm_conf;
 
 typedef struct {
     float kp, ki, kd, kv;
@@ -258,6 +255,7 @@ typedef struct {
 } pid2_t;
 
 static float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
+static int clamp(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
 void pid2_reset(pid2_t *p, float target, float act)
 {
@@ -794,6 +792,11 @@ static void driver_delay (uint32_t ms, delay_callback_ptr callback)
 static void stepperEnable (axes_signals_t enable, bool hold)
 {
     enable.mask ^= settings.steppers.enable_invert.mask;
+
+// #ifdef Z_AXIS_SERVO
+//     pwm_set_enabled(pwm_gpio_to_slice_num(Z_SERVO_PIN), enable.z || hold);
+// #endif
+
 #if TRINAMIC_ENABLE && TRINAMIC_I2C
     axes_signals_t tmc_enable = trinamic_stepper_enable(enable);
 
@@ -1509,11 +1512,15 @@ static void stepperGoIdle (bool clear_signals)
 // TODO: Stepper stepping function
 static void __not_in_flash_func(stepperPulseStart)(stepper_t *stepper)
 {
+#if defined(DC_ENCODER) || defined (Z_AXIS_SERVO)
 #ifdef DC_ENCODER
     // positions in raw steps, to feed into PID
     position.x += (stepper->dir_out.x ? -1 : 1) * stepper->step_out.x;
     position.y += (stepper->dir_out.y ? -1 : 1) * stepper->step_out.y;
+#endif
+#ifdef Z_AXIS_SERVO
     position.z += (stepper->dir_out.z ? -1 : 1) * stepper->step_out.z;
+#endif
 #else
     if(stepper->dir_changed.bits) {
         stepper->dir_changed.bits = 0;
@@ -2940,6 +2947,12 @@ void board_ports_init (void)
 }
 #endif
 
+void pwm_setup (uint gpio, pwm_config* conf, uint16_t initial_value) {
+    gpio_set_function(gpio, GPIO_FUNC_PWM);
+    pwm_init(pwm_gpio_to_slice_num(gpio), conf, true);
+    pwm_set_gpio_level(gpio, initial_value);
+}
+
 // Initialize HAL pointers, setup serial comms and enable EEPROM
 // NOTE: grblHAL is not yet configured (from EEPROM data), driver_setup() will be called when done
 bool driver_init (void)
@@ -3192,23 +3205,23 @@ bool driver_init (void)
 #endif
 
 #ifdef DC_ENCODER
-    quadrature_encoder_sm.x = pio_claim_unused_sm(pio0, false);
+    quadrature_encoder_sm.x = pio_claim_unused_sm(pio0, true);
     pio_add_program(pio0, &quadrature_encoder_program);
     quadrature_encoder_program_init(pio0, quadrature_encoder_sm.x, X_ENCODER_A_PIN, 100000);
-
-    pwm_conf = pwm_get_default_config();
-    pwm_conf.top = 256;
-
-    pwm_config_set_clkdiv(&pwm_conf, 4.f);
-
-    gpio_set_function(X_MOTOR_A_PIN, GPIO_FUNC_PWM);
-    gpio_set_function(X_MOTOR_B_PIN, GPIO_FUNC_PWM);
     
-    pwm_init(pwm_gpio_to_slice_num(X_MOTOR_A_PIN), &pwm_conf, true);
-    pwm_init(pwm_gpio_to_slice_num(X_MOTOR_B_PIN), &pwm_conf, true);
+    quadrature_encoder_sm.y = pio_claim_unused_sm(pio0, true);
+    pio_add_program(pio0, &quadrature_encoder_program);
+    quadrature_encoder_program_init(pio0, quadrature_encoder_sm.y, Y_ENCODER_A_PIN, 100000);
 
-    pwm_set_gpio_level(X_MOTOR_A_PIN, 0);
-    pwm_set_gpio_level(X_MOTOR_B_PIN, 0);
+    dc_pwm_conf = pwm_get_default_config();
+    pwm_config_set_wrap(&dc_pwm_conf, 256);
+
+    pwm_config_set_clkdiv(&dc_pwm_conf, 4.f);
+    
+    pwm_setup(X_MOTOR_A_PIN, &dc_pwm_conf, 0);
+    pwm_setup(X_MOTOR_B_PIN, &dc_pwm_conf, 0);
+    pwm_setup(Y_MOTOR_A_PIN, &dc_pwm_conf, 0);
+    pwm_setup(Y_MOTOR_B_PIN, &dc_pwm_conf, 0);
 
     dma_channels.x = dma_claim_unused_channel(true);
     dma_channel_config x_channel_conf = dma_channel_get_default_config(dma_channels.x);
@@ -3218,23 +3231,40 @@ bool driver_init (void)
     channel_config_set_dreq(&x_channel_conf, pio_get_dreq(pio0, quadrature_encoder_sm.x, false));
     dma_channel_configure(dma_channels.x, &x_channel_conf, &encoder_counter.x, &pio0->rxf[quadrature_encoder_sm.x], 0xFFFFFFFF, true);
 
-    // pid_values_t cfg_x = {
-    //     .p_gain = 3.0f, 
-    //     .i_gain = 0.0f,
-    //     .d_gain = 12.0f,
-    //     .i_max_error = 3000.0f,
-    //     .d_max_error = 20.0f,
-    //     .max_error = (pwm_conf.top - 1)
-    // };
+    dma_channels.y = dma_claim_unused_channel(true);
+    dma_channel_config y_channel_conf = dma_channel_get_default_config(dma_channels.y);
+    channel_config_set_transfer_data_size(&y_channel_conf, DMA_SIZE_32);
+    channel_config_set_read_increment(&y_channel_conf, false);
+    channel_config_set_write_increment(&y_channel_conf, false);
+    channel_config_set_dreq(&y_channel_conf, pio_get_dreq(pio0, quadrature_encoder_sm.y, false));
+    dma_channel_configure(dma_channels.y, &y_channel_conf, &encoder_counter.y, &pio0->rxf[quadrature_encoder_sm.y], 0xFFFFFFFF, true);
 
-    // pidf_init(&pid.x, &cfg_x);
-    pid.x.kp = 5.0f;
-    pid.x.ki = 0.0f;
+    pid.x.kp = 4.0f;
+    pid.x.ki = 0.002f;
     pid.x.kd = 0.0f;
-    pid.x.out_max = pwm_conf.top - 1;
-    pid.x.slew = 100.0f;
-
+    pid.x.kv = 4.0f;
+    pid.x.out_max = dc_pwm_conf.top - 1;
+    pid.x.slew = 80.0f;
     pid2_reset(&pid.x, 0, 0);
+
+    pid.y.kp = 3.0f;
+    pid.y.ki = 0.004f;
+    pid.y.kd = 13.0f;
+    pid.y.kv = 10.0f;
+    pid.y.out_max = dc_pwm_conf.top - 1;
+    pid.y.slew = 80.0f;
+    pid2_reset(&pid.y, 0, 0);
+#endif
+
+#ifdef Z_AXIS_SERVO
+    // // Set to 1us counts, wrap at SERVO_PERIOD_US
+    // servo_pwm_conf = pwm_get_default_config();
+    // pwm_config_set_clkdiv(&servo_pwm_conf, (float)clock_get_hz(clk_sys) / 1000000.0f);
+    // pwm_config_set_wrap(&servo_pwm_conf, SERVO_PERIOD_US - 1);
+    // pwm_setup(Z_SERVO_PIN, &servo_pwm_conf, (SERVO_MAX_US + SERVO_MIN_US) / 2);
+    servo_init();
+    servo_clock_auto();
+    servo_attach(Z_SERVO_PIN);
 #endif
 
     stepper_timer_sm = pio_claim_unused_sm(pio1, false);
@@ -3525,26 +3555,52 @@ void __not_in_flash_func(isr_systick)(void)
 {
     elapsed_ticks++;
 
-    // int32_t x_count = quadrature_encoder_get_count(pio0, quadrature_encoder_sm.x);
     float x_out = pid2(&pid.x, (float)encoder_counter.x, (float)position.x);
+    int32_t x_min_duty = 90;
 
-    if (x_out < 0.2f * pwm_conf.top && x_out > -0.2f * pwm_conf.top)
+    float y_out = pid2(&pid.y, (float)encoder_counter.y, (float)position.y);
+    int32_t y_min_duty = 90;
+
+    if (x_out < 0.08f*dc_pwm_conf.top && x_out > -0.08f*dc_pwm_conf.top)
     {
         pwm_set_gpio_level(X_MOTOR_A_PIN, 0);
         pwm_set_gpio_level(X_MOTOR_B_PIN, 0);
     }
     else if (x_out <= 0.0f) {
+        x_out = (x_out / ((float)dc_pwm_conf.top)) * (float)(dc_pwm_conf.top - x_min_duty) - x_min_duty;
         pwm_set_gpio_level(X_MOTOR_A_PIN, (uint16_t)(-x_out));
         pwm_set_gpio_level(X_MOTOR_B_PIN, 0);
     } else {
+        x_out = (x_out / ((float)dc_pwm_conf.top)) * (float)(dc_pwm_conf.top - x_min_duty) + x_min_duty;
         pwm_set_gpio_level(X_MOTOR_A_PIN, 0);
         pwm_set_gpio_level(X_MOTOR_B_PIN, (uint16_t)(x_out));
     }
-    // char buf[sizeof(float)*3+4];
-    // snprintf(buf, sizeof buf, "%f\r\n", x_out);
 
-    // if (elapsed_ticks % 1000 == 0)
-    //     hal.stream.write(buf);
+    if (y_out < 0.08f*dc_pwm_conf.top && y_out > -0.08f*dc_pwm_conf.top)
+    {
+        pwm_set_gpio_level(Y_MOTOR_A_PIN, 0);
+        pwm_set_gpio_level(Y_MOTOR_B_PIN, 0);
+    }
+    else if (y_out <= 0.0f) {
+        y_out = (y_out / ((float)dc_pwm_conf.top)) * (float)(dc_pwm_conf.top - y_min_duty) - y_min_duty;
+        pwm_set_gpio_level(Y_MOTOR_A_PIN, (uint16_t)(-y_out));
+        pwm_set_gpio_level(Y_MOTOR_B_PIN, 0);
+    } else {
+        y_out = (y_out / ((float)dc_pwm_conf.top)) * (float)(dc_pwm_conf.top - y_min_duty) + y_min_duty;
+        pwm_set_gpio_level(Y_MOTOR_A_PIN, 0);
+        pwm_set_gpio_level(Y_MOTOR_B_PIN, (uint16_t)(y_out));
+    }
+
+    if(!dma_channel_is_busy(dma_channels.x))
+        dma_channel_set_trans_count(dma_channels.x, 0xFFFFFFFF, true);
+
+    if(!dma_channel_is_busy(dma_channels.y))
+        dma_channel_set_trans_count(dma_channels.y, 0xFFFFFFFF, true);
+    
+#ifdef Z_AXIS_SERVO
+    // pwm_set_gpio_level(Z_SERVO_PIN, (((SERVO_INVERT_DIRECTION ? -1 : 1) * clamp(position.z, -90, 90) + 90) / 180.0f) * (SERVO_MAX_US - SERVO_MIN_US) + SERVO_MIN_US);
+    servo_move_to(Z_SERVO_PIN, ((int)(SERVO_INVERT_DIRECTION ? -1 : 1) * clamp(position.z, -90, 90)) + 90);
+#endif
 
 #if SDCARD_ENABLE
     static uint32_t fatfs_ticks = 10;

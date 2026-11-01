@@ -40,9 +40,9 @@
 // Define step direction output pins.
 // Unused - depended on by stepper code
 #define DIRECTION_PORT          GPIO_OUTPUT
-#define X_DIRECTION_PIN         5
-#define Y_DIRECTION_PIN         6
-#define Z_DIRECTION_PIN         7
+#define X_DIRECTION_PIN         18
+#define Y_DIRECTION_PIN         19
+#define Z_DIRECTION_PIN         21
 #define DIRECTION_OUTMODE       GPIO_SHIFT5
 
 // Define stepper driver enable/disable output pin.
@@ -53,15 +53,26 @@
 // Define pins for quadrature encoder
 // Pin + 1 is second pin (must be adjacent due to PIO)
 #define X_ENCODER_A_PIN 2
+#define Y_ENCODER_A_PIN 4
 
 #define X_MOTOR_A_PIN 6
 #define X_MOTOR_B_PIN 7
+#define Y_MOTOR_A_PIN 8
+#define Y_MOTOR_B_PIN 9
+#endif
+
+#ifdef Z_AXIS_SERVO
+#define Z_SERVO_PIN 21
+#define SERVO_MIN_US 1000
+#define SERVO_MAX_US 2000
+#define SERVO_PERIOD_US 20000   // Max 2^16 - 1
+#define SERVO_INVERT_DIRECTION true
 #endif
 
 // Define homing/hard limit switch input pins.
-#define X_LIMIT_PIN             9
-#define Y_LIMIT_PIN             10
-#define Z_LIMIT_PIN             11
+#define X_LIMIT_PIN             10
+#define Y_LIMIT_PIN             11
+#define Z_LIMIT_PIN             12
 #define LIMIT_INMODE            GPIO_MAP
 
 // #define AUXOUTPUT0_PORT         GPIO_OUTPUT
@@ -122,7 +133,7 @@
 #define SPINDLE_INDEX_PIN       22
 #else
 // #define AUXINPUT0_PIN           22
-#define AUXINPUT1_PIN           21
+#define AUXINPUT1_PIN           19
 #endif
 // #define AUXINPUT2_PIN           28 // Probe
 // #define AUXINPUT3_PIN           18 // Reset/EStop

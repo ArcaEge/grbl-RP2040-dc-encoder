@@ -39,11 +39,11 @@
 #define BOARD_MY_MACHINE      // Add my_machine_map.h before enabling this!
 
 // Configuration
-// Uncomment to enable.
+// Uncomment to enable.h
 
 #ifndef USB_SERIAL_CDC
 
-#define USB_SERIAL_CDC          0 //1 // Serial communication via native USB
+#define USB_SERIAL_CDC          0 // Serial communication via native USB
 
 #endif
 //#define BLUETOOTH_ENABLE        2 // Set to 2 for HC-05 module, enable in CMakeLists.txt if for Pico W Bluetooth.
@@ -179,3 +179,4 @@
 #define SPINDLE_ENABLE 0
 
 #define DC_ENCODER
+#define Z_AXIS_SERVO
